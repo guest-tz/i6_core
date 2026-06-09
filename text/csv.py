@@ -1,10 +1,9 @@
 __all__ = ["GetColumnsFromCsvFileJob"]
 
 import csv
-
 from sisyphus import Job, Task, tk
-
 from i6_core import util
+from collections.abc import Callable
 
 
 class GetColumnsFromCsvFileJob(Job):
@@ -15,7 +14,19 @@ class GetColumnsFromCsvFileJob(Job):
     The i-th output file contains the i-th column.
     """
 
-    def __init__(self, csv_file: tk.Path, columns: list[int], delimiter: str = ","):
+    __sis_hash_exclude__ = {
+        "escape_fn": None,
+        "allow_newline": False,
+    }
+
+    def __init__(
+        self,
+        csv_file: tk.Path,
+        columns: list[int],
+        delimiter: str = ",",
+        escape_fn: Callable[[str], str] | None = None,
+        allow_newline: False = False,
+    ):
         """
         :param csv_file: Csv file for which to retrieve the corresponding column.
         :param column: Zero-based index for the column for which to retrieve the values.
@@ -24,8 +35,12 @@ class GetColumnsFromCsvFileJob(Job):
         self.csv_file = csv_file
         self.columns = columns
         self.delimiter = delimiter
+        self.escape_fn = escape_fn
+        self.allow_newline = allow_newline
 
-        self.out_column_values = {i: self.output_path(f"out_col_{i}.txt.gz") for i in self.columns}
+        self.out_column_values = {
+            i: self.output_path(f"out_col_{i}.txt.gz") for i in self.columns
+        }
 
         self.rqmt = {"cpu": 1, "mem": 1.0, "time": 1.0}
 
@@ -34,10 +49,18 @@ class GetColumnsFromCsvFileJob(Job):
 
     def run(self):
         # No need to dump the outputs as a csv file, since each output just contains a single column.
-        opened_outs = {i: util.uopen(self.out_column_values[i], "wt") for i in self.columns}
+        opened_outs = {
+            i: util.uopen(self.out_column_values[i], "wt") for i in self.columns
+        }
         with util.uopen(self.csv_file, "rt") as f_in:
             in_csv = csv.reader(f_in, delimiter=self.delimiter)
             for csv_line in in_csv:
                 for column in self.columns:
-                    # Encoding with unicode_escape allows special characters like "\n" to be printed as intended.
-                    opened_outs[column].write(f"{csv_line[column].encode('unicode_escape').decode('utf-8')}\n")
+                    col = csv_line[column]
+                    if self.escape_fn is not None:
+                        col = self.escape_fn(col)
+                    if not self.allow_newline and "\n" in col:
+                        raise ValueError(
+                            "\\n is not allowed! Use escape_fn or set allow_newline to True!"
+                        )
+                    opened_outs[column].write(f"{col}\n")
